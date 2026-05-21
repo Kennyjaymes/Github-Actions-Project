@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  app1:
+    build: ./app1
+    container_name: app1_container
+    ports:
+      - "8081:5001"
+    restart: always
+
+  app2:
+    build: ./app2
+    container_name: app2_container
+    ports:
+      - "8082:5002"
+    restart: always
