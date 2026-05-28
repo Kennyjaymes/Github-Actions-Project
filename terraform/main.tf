@@ -4,14 +4,16 @@ resource "aws_key_pair" "deployer_key" {
 }
 
 # Default VPC (or you can define a custom one)
-data "aws_vpc" "default" {
-  default = true
+resource "aws_default_vpc" "default" {
+  tags = {
+    Name = "Default VPC"
+  }
 }
 
 resource "aws_security_group" "app_sg" {
   name        = "app_sg"
   description = "Allow SSH and Application traffic"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = aws_default_vpc.default.id
 
   # SSH
   ingress {
