@@ -1,4 +1,4 @@
-name: 3 - Terminate Instance
+name: 3 - Terminate Instance and Cleanup
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  terminate:
-    name: 'Terminate EC2 Instance'
+  cleanup:
+    name: 'Cleanup AWS Resources'
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS Credentials
@@ -18,19 +18,47 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Terminate EC2
+      - name: Terminate EC2 and Wait
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=DockerAppServer" "Name=instance-state-name,Values=running" \
             --query "Reservations[*].Instances[*].InstanceId" \
             --output text)
             
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+          if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
+            echo "Terminating instance with ID: $INSTANCE_ID"
+            aws ec2 terminate-instances --instance-ids $INSTANCE_ID
+            echo "Waiting for instance to terminate (this may take a few minutes)..."
+            aws ec2 wait instance-terminated --instance-ids $INSTANCE_ID
+            echo "Instance terminated."
+          else
             echo "No running instance found to terminate."
-            exit 0
           fi
+
+      - name: Delete Security Group
+        run: |
+          echo "Attempting to delete security group 'app_sg'..."
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=app_sg" --query "SecurityGroups[*].GroupId" --output text 2>/dev/null || true)
+          if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+            aws ec2 delete-security-group --group-id $SG_ID || echo "Failed to delete SG (maybe it's already deleted or still has dependencies)"
+            echo "Security group deleted."
+          else
+            echo "Security group 'app_sg' not found."
+          fi
+
+      - name: Delete SSH Key Pair
+        run: |
+          echo "Attempting to delete key pair 'github-actions-deployer-key'..."
+          aws ec2 delete-key-pair --key-name github-actions-deployer-key || true
+          echo "Key pair deleted or not found."
+
+      - name: Delete IAM Access Key
+        if: always()
+        run: |
+          echo "Fetching caller identity..."
+          CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          USERNAME=$(echo $CALLER_ARN | awk -F'/' '{print $NF}')
           
-          echo "Terminating instance with ID: $INSTANCE_ID"
-          aws ec2 terminate-instances --instance-ids $INSTANCE_ID
-          
-          echo "Instance termination initiated."
+          echo "Attempting to delete IAM access key for user: $USERNAME"
+          aws iam delete-access-key --user-name "$USERNAME" --access-key-id "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          echo "IAM access key successfully deleted from AWS."
